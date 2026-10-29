@@ -1,7 +1,9 @@
 {
   "display_name": "Robo (test creator)",
   "height_m": 1.2,
+  "base_m": 0.0,
   "aspect": 1.148936170212766,
+  "anchor_x": 0.5138,
   "names": [
     "priya"
   ],

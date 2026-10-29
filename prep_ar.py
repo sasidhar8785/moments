@@ -21,15 +21,40 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from render import FPS, matte_clip
+from render import FPS, matte_clip, read_frames
 
 WEB = Path(__file__).parent / "web" / "ar" / "creators"
 MAX_H = 960  # height of the colour half; total frame is twice this
 
 
-def load_rgba(src: Path) -> list[np.ndarray]:
+def chroma_key(frame: np.ndarray) -> np.ndarray:
+    """Green-screen key with spill suppression. Returns BGRA."""
+    f = frame.astype(np.float32) / 255
+    b, g, r = f[:, :, 0], f[:, :, 1], f[:, :, 2]
+    spill = g - np.maximum(r, b)
+    alpha = 1 - np.clip((spill - 0.06) / (0.22 - 0.06), 0, 1)
+    # Clean the matte: drop specks, then soften the edge by a pixel.
+    a8 = (alpha * 255).astype(np.uint8)
+    a8 = cv2.morphologyEx(a8, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    a8 = cv2.erode(a8, np.ones((2, 2), np.uint8))
+    a8 = cv2.GaussianBlur(a8, (3, 3), 0)
+    # Keep only the biggest blob (the person), so stray marks on the screen vanish.
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((a8 > 128).astype(np.uint8))
+    if n > 1:
+        keep = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        body = cv2.dilate((labels == keep).astype(np.uint8), np.ones((9, 9), np.uint8))
+        a8 = a8 * body
+    # Despill: green may not exceed the brighter of red and blue.
+    g = np.minimum(g, np.maximum(r, b) + 0.02)
+    out = (np.dstack([b, g, r]) * 255).clip(0, 255).astype(np.uint8)
+    return np.dstack([out, a8])
+
+
+def load_rgba(src: Path, keying: str) -> list[np.ndarray]:
     if src.is_dir():
         return [cv2.imread(str(p), cv2.IMREAD_UNCHANGED) for p in sorted(src.glob("*.png"))]
+    if keying == "green":
+        return [chroma_key(f) for f in read_frames(src)]
     return matte_clip(src)
 
 
@@ -70,7 +95,7 @@ def main() -> None:
 
     meta = json.loads((args.creator / "creator.json").read_text())
     sources = find_clips(args.creator)
-    rgba = {k: load_rgba(v) for k, v in sources.items()}
+    rgba = {k: load_rgba(v, meta.get("keying", "ai")) for k, v in sources.items()}
 
     # One shared crop box (union of every clip), padded so nothing touches the edge.
     alpha = np.max([f[:, :, 3] for frames in rgba.values() for f in frames], axis=0)
@@ -80,6 +105,12 @@ def main() -> None:
     x0, x1 = max(xs.min() - pad, 0), min(xs.max() + pad, alpha.shape[1])
     scale = min(1.0, MAX_H / (y1 - y0))
     w, h = int((x1 - x0) * scale) // 2 * 2, int((y1 - y0) * scale) // 2 * 2
+
+    # Where the person stands across the frame: centre of the lowest quarter (legs), which
+    # outstretched arms don't move. The page centres this over the floor marker.
+    legs = np.concatenate([f[y1 - (y1 - y0) // 4:y1, x0:x1, 3] for frames in rgba.values() for f in frames[::6]])
+    cols = (legs > 128).sum(axis=0).astype(np.float64)
+    anchor_x = float((cols * np.arange(len(cols))).sum() / max(cols.sum(), 1) / len(cols))
 
     out_dir = WEB / args.creator.name
     for key, frames in rgba.items():
@@ -98,7 +129,10 @@ def main() -> None:
     manifest = {
         "display_name": meta["display_name"],
         "height_m": args.height_m,
+        # Clips framed above the feet float this high, fading out into the hologram base.
+        "base_m": meta.get("base_m", 0.0),
         "aspect": w / h,
+        "anchor_x": round(anchor_x, 4),
         "names": names,
         "occasions": meta["occasions"],
     }
