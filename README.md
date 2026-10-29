@@ -32,3 +32,15 @@ The creator cut-out runs once per clip and is cached in `.cache/`; later renders
 2. Create a Google Form or Tally form with a file upload for the room video; put its link in `web/thanks.html`.
 3. Host `web/` on any static host (GitHub Pages, Netlify, Cloudflare Pages).
 4. For each order, run `render.py` and email the video back.
+
+## Web AR (live, in the fan's room)
+
+`web/ar/` places the creator's real cut-out video on the fan's floor using WebXR (Chrome on Android).
+Other browsers get a 3D preview. It must be served over HTTPS (e.g. GitHub Pages).
+
+```bash
+python prep_ar.py creators/robot --height-m 1.2   # writes web/ar/creators/robot/*.mp4 + manifest.json
+```
+
+Open `web/ar/?c=robot&name=Priya&occ=birthday`. Point at the floor, tap to place, tap again to move.
+The `creators/robot` stand-in is the CC0 "RobotExpressive" model by Tomás Laulhé (Quaternius), rendered to frames.

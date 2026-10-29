@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Moments AR</title>
+<style>
+  :root {
+    --bg: #faf7f2; --fg: #1d1b19; --muted: #6b655e; --card: #ffffff;
+    --accent: #e8590c; --accent-fg: #ffffff; --line: #e7e0d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161412; --fg: #f3efe9; --muted: #a59d93; --card: #211e1b;
+            --accent: #ff7a2e; --accent-fg: #160c05; --line: #34302b; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 8px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input, select { width: 100%; font: inherit; padding: 12px; border-radius: 10px;
+                  border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  button { display: block; width: 100%; font: inherit; font-weight: 700; padding: 16px; margin-top: 20px;
+           border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #note { margin-top: 16px; }
+  #preview { display: none; width: 100%; aspect-ratio: 9 / 14; border-radius: 16px; margin-top: 16px;
+             background: var(--card); border: 1px solid var(--line); }
+
+  /* Shown on top of the camera view during AR. */
+  #overlay { display: none; position: fixed; inset: 0; pointer-events: none; color: #fff;
+             font: 16px/1.4 system-ui, sans-serif; }
+  #hint { position: absolute; left: 16px; right: 16px; top: calc(16px + env(safe-area-inset-top));
+          text-align: center; background: rgba(0,0,0,.55); padding: 10px 14px; border-radius: 12px; }
+  #bar { position: absolute; left: 16px; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom));
+         display: flex; gap: 10px; }
+  #bar button { pointer-events: auto; margin: 0; padding: 14px; flex: 1; background: rgba(0,0,0,.6); color: #fff; }
+  #bar button.primary { background: var(--accent); color: var(--accent-fg); }
+</style>
+</head>
+<body>
+<main id="setup">
+  <h1 id="title">A moment, in your room</h1>
+  <p class="muted" id="sub">Loading…</p>
+
+  <label for="name">Your first name</label>
+  <input id="name" autocomplete="given-name" placeholder="e.g. Priya">
+
+  <label for="occasion">Occasion</label>
+  <select id="occasion"></select>
+
+  <button id="start" disabled>Start</button>
+  <p id="note" class="muted"></p>
+  <canvas id="preview"></canvas>
+</main>
+
+<div id="overlay">
+  <div id="hint">Point your phone at the floor and move it slowly</div>
+  <div id="bar">
+    <button id="replay">Replay</button>
+    <button id="exit" class="primary">Done</button>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
