@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A moment from your favourite creator</title>
+<style>
+  :root {
+    --bg: #faf7f2; --fg: #1d1b19; --muted: #6b655e; --card: #ffffff;
+    --accent: #e8590c; --accent-fg: #ffffff; --line: #e7e0d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161412; --fg: #f3efe9; --muted: #a59d93; --card: #211e1b;
+            --accent: #ff7a2e; --accent-fg: #160c05; --line: #34302b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 24px 16px 48px; }
+  .who { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .who img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: var(--line); }
+  .who b { display: block; }
+  .who span { color: var(--muted); font-size: 14px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  video { width: 100%; aspect-ratio: 9 / 16; border-radius: 16px; background: #000; display: block; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin-top: 20px; }
+  ol { padding-left: 20px; margin: 0; }
+  ol li { margin: 6px 0; }
+  .price { font-size: 32px; font-weight: 700; margin: 0; }
+  .price small { font-size: 15px; font-weight: 400; color: var(--muted); }
+  a.buy { display: block; text-align: center; background: var(--accent); color: var(--accent-fg);
+          text-decoration: none; font-weight: 700; padding: 16px; border-radius: 12px; margin-top: 16px; }
+  .fine { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; margin-top: 32px; }
+</style>
+</head>
+<body>
+<main>
+  <!-- Edit these per creator: name, handle, photo, demo video and Stripe Payment Link. -->
+  <div class="who">
+    <img src="creator.jpg" alt="">
+    <div><b id="creator-name">Creator Name</b><span id="creator-handle">@handle</span></div>
+  </div>
+
+  <h1>Get a personal moment from <span class="cn">Creator Name</span>, in your room</h1>
+  <p class="lead">They say your name and wish you happy birthday, good luck, or cheer you on, standing right in your space.</p>
+
+  <video src="demo.mp4" controls playsinline muted loop poster="demo.jpg"></video>
+
+  <div class="card">
+    <ol>
+      <li>Choose the occasion and type the first name.</li>
+      <li>Film your room for 5 seconds (hold the phone still).</li>
+      <li>Get your video within 24 hours to keep and share.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <p class="price">$4.99 <small>· half goes to <span class="cn">Creator Name</span></small></p>
+    <!-- Stripe Payment Link with custom fields "First name" (text) and "Occasion" (dropdown). -->
+    <a class="buy" href="https://buy.stripe.com/REPLACE_ME">Get my moment</a>
+    <p class="fine">Made from real clips <span class="cn">Creator Name</span> recorded, with your name chosen from the ones they recorded.
+      Videos are labelled "AI-assisted". Full refund if we can't deliver.</p>
+  </div>
+
+  <footer>Made with the creator's consent · <a href="mailto:hello@example.com">Report a problem</a></footer>
+</main>
+<script>
+  // Fill in the creator's name everywhere from the header.
+  const name = document.getElementById("creator-name").textContent;
+  document.querySelectorAll(".cn").forEach(el => el.textContent = name);
+</script>
+</body>
+</html>
