@@ -1,0 +1,27 @@
+[project]
+name = "momentsgen"
+version = "0.1.0"
+description = "Puts a character into a real video clip with open-source models (Wan VACE)."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pillow",
+    "imageio-ffmpeg",
+]
+
+[project.optional-dependencies]
+# The video model. Kept optional so the clip handling can be installed and tested without it.
+model = ["torch", "diffusers>=0.35", "transformers", "accelerate", "ftfy", "sentencepiece"]
+# Cuts the character out of their reference photo.
+cutout = ["rembg[cpu]"]
+test = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["momentsgen"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
