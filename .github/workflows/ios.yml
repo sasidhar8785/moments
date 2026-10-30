@@ -42,5 +42,7 @@ jobs:
             echo "Project unchanged"
           else
             git commit -m "Regenerate Xcode project"
-            git push
+            # main may have moved on while this ran (or this is a re-run of an older commit).
+            git pull --rebase origin main
+            git push origin HEAD:main
           fi
