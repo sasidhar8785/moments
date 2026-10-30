@@ -1,0 +1,44 @@
+# XcodeGen spec for the Moments iOS/iPadOS app. Generate the project with `xcodegen generate`
+# (CI does this and commits ios/Moments.xcodeproj, so on a Mac you can just open that).
+name: Moments
+options:
+  bundleIdPrefix: com.sasidhar8785
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+targets:
+  Moments:
+    type: application
+    platform: iOS
+    sources:
+      - path: Moments
+      # The same creator clips the web AR page uses, copied into the app as a "creators" folder.
+      - path: ../web/ar/creators
+        type: folder
+        buildPhase: resources
+    info:
+      path: Moments/Info.plist
+      properties:
+        CFBundleDisplayName: Moments
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSCameraUsageDescription: Moments uses the camera to place the creator in your room.
+        NSPhotoLibraryAddUsageDescription: Moments saves the moments you record to your photos.
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities: [arkit]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sasidhar8785.moments
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
