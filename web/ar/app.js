@@ -199,9 +199,12 @@ let yawZero = null;
 
 async function startCamera() {
   $("start").disabled = true;
-  // iOS asks for motion permission; it must happen inside the tap.
-  const motionAsk = typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission
-    ? DeviceOrientationEvent.requestPermission().catch(() => "denied") : Promise.resolve("granted");
+  // iOS (and newer Chrome) ask for motion permission; it must happen inside the tap. Listen
+  // regardless of the answer: without permission no events arrive, and we say so below.
+  if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission) {
+    DeviceOrientationEvent.requestPermission().catch(() => "denied");
+  }
+  addEventListener("deviceorientation", (e) => { if (e.alpha !== null) orientation = e; });
   const primed = primeVideo();
   try {
     camStream = await navigator.mediaDevices.getUserMedia({
@@ -213,10 +216,13 @@ async function startCamera() {
     $("start").disabled = false;
     return;
   }
-  if ((await motionAsk) === "granted") {
-    addEventListener("deviceorientation", (e) => { if (e.alpha !== null) orientation = e; });
-  }
   await primed;
+  setTimeout(() => {
+    if (!orientation) {
+      $("hint").textContent = "Motion sensors are off, so they can't stay in place as you turn. "
+        + "Allow motion & orientation for this site in your browser settings.";
+    }
+  }, 2000);
 
   const cam = $("cam");
   cam.srcObject = camStream;
@@ -224,6 +230,7 @@ async function startCamera() {
   showExperience(true);
 
   const camera = new THREE.PerspectiveCamera(62, 1, 0.05, 50);
+  window.__moments = { THREE, camera, creator };  // read-only hook for automated tests
   camera.position.set(0, EYE, 0);
   creator.position.set(0, 0, -DIST);
   creator.visible = true;
@@ -423,13 +430,20 @@ async function startXR() {
   reticle.matrixAutoUpdate = false;
   reticle.visible = false;
   scene.add(reticle);
+  const stats = { frames: 0, hitFrames: 0 };
+  window.__moments = { THREE, creator, reticle, renderer, stats };  // read-only hook for automated tests
 
   const viewerSpace = await session.requestReferenceSpace("viewer");
   const hitSource = await session.requestHitTestSource({ space: viewerSpace });
 
+  // Floor detection drops out for single frames now and then; a tap during a dropout
+  // uses the last floor point seen in the past half second instead of being ignored.
+  const HIT_GRACE_MS = 500;
+  let lastHitAt = -Infinity;
+
   const controller = renderer.xr.getController(0);
   controller.addEventListener("select", () => {
-    if (!reticle.visible) return;
+    if (performance.now() - lastHitAt > HIT_GRACE_MS) return;
     const first = !creator.visible;
     creator.position.setFromMatrixPosition(reticle.matrix);
     creator.visible = true;
@@ -445,11 +459,14 @@ async function startXR() {
   let hinted = false;
   renderer.setAnimationLoop((now, frame) => {
     const hits = frame ? frame.getHitTestResults(hitSource) : [];
-    reticle.visible = hits.length > 0;
+    stats.frames++;
     if (hits.length) {
+      stats.hitFrames++;
+      lastHitAt = performance.now();  // same clock as the tap handler
       reticle.matrix.fromArray(hits[0].getPose(renderer.xr.getReferenceSpace()).transform.matrix);
       if (!hinted && !creator.visible) { $("hint").textContent = "Tap to place them here"; hinted = true; }
     }
+    reticle.visible = performance.now() - lastHitAt <= HIT_GRACE_MS;
     animateHologram(now);
     faceCamera(renderer.xr.getCamera());
     renderer.render(scene, camera);
