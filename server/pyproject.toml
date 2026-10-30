@@ -14,7 +14,12 @@ dependencies = [
 model = ["torch", "diffusers>=0.35", "transformers", "accelerate", "ftfy", "sentencepiece"]
 # Cuts the character out of their reference photo.
 cutout = ["rembg[cpu]"]
-test = ["pytest"]
+# The HTTP API the app talks to.
+server = ["fastapi", "uvicorn", "python-multipart"]
+test = ["pytest", "httpx"]
+
+[project.scripts]
+moments-server = "momentsgen.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -22,6 +27,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["momentsgen"]
+
+[tool.setuptools.package-data]
+momentsgen = ["characters/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

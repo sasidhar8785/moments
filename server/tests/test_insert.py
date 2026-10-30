@@ -80,3 +80,11 @@ def test_nothing_outside_the_placement_changes(tiny_pipe, tmp_path):
 def test_a_clip_shorter_than_five_model_frames_is_rejected(tiny_pipe, tmp_path):
     with pytest.raises(ValueError, match="too short"):
         run(tiny_pipe, make_clip(tmp_path / "in.mp4", 0.2), tmp_path / "out.mp4", seconds=0.2)
+
+
+def test_progress_is_reported_after_every_step(tiny_pipe, tmp_path):
+    steps = []
+    insert_character(tiny_pipe, make_clip(tmp_path / "in.mp4", 2.0), REFERENCE, BOX, "waves", tmp_path / "out.mp4",
+                     max_seconds=1.1, steps=3, size=(32, 32), on_step=lambda done, total: steps.append((done, total)))
+
+    assert steps == [(1, 3), (2, 3), (3, 3)]

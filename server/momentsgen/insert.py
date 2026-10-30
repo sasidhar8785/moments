@@ -7,6 +7,7 @@ regenerated region is then blended back into the original full-resolution frames
 outside the box stays exactly as filmed.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,11 +104,12 @@ def insert_character(
     guidance: float = 5.0,
     seed: int = 0,
     size: tuple[int, int] | None = None,
+    on_step: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Write `out_path`: the clip with the character generated inside `placement`, original audio kept.
 
     `reference` should already be prepared (see `prepare_reference`). `size` overrides the model's
-    working resolution (tests use a tiny one).
+    working resolution (tests use a tiny one). `on_step(done, total)` is called after each denoising step.
     """
     import torch
 
@@ -128,6 +130,11 @@ def insert_character(
         frame.paste((128, 128, 128), (x0, y0, x1, y1))  # VACE expects the region to fill as mid-grey
         video.append(frame)
 
+    def step_end(_pipe, i, _t, kwargs):
+        if on_step:
+            on_step(i + 1, steps)
+        return kwargs
+
     result = pipe(
         prompt=prompt,
         negative_prompt=NEGATIVE_PROMPT,
@@ -141,6 +148,7 @@ def insert_character(
         guidance_scale=guidance,
         generator=torch.Generator().manual_seed(seed),
         output_type="np",
+        callback_on_step_end=step_end,
     ).frames[0]
     if not np.isfinite(result).all():
         raise FloatingPointError("The model produced invalid pixels (numerical overflow). Retry with float32.")

@@ -1,0 +1,6 @@
+{
+  "name": "Robo",
+  "tagline": "A cheerful little robot",
+  "description": "A small cheerful orange-and-grey robot with a big boxy head and round black eyes, about 30 cm tall.",
+  "default_action": "notices the person filming, waves excitedly and hops closer"
+}
