@@ -123,6 +123,7 @@ def create_app(generate: Generator, data_dir: Path | None = None, characters: di
     @app.get("/characters")
     def list_characters():
         return [{"id": c["id"], "name": c["name"], "tagline": c.get("tagline", ""),
+                 "default_action": c.get("default_action", ""),
                  "image_url": f"/characters/{c['id']}/image"} for c in characters.values()]
 
     @app.get("/characters/{character_id}/image")

@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server tests
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: server } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.12" }
+      - name: Install (CPU-only PyTorch keeps this small)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[model,server,test]"
+      - run: pytest -q
+
+  app-checks:
+    name: App checks
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npx expo lint
+
+  android:
+    name: Android build (APK)
+    needs: app-checks
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: "17" }
+      - uses: gradle/actions/setup-gradle@v5
+      - run: npm ci
+      - run: npx expo prebuild --platform android --no-install
+      # Release build with the JavaScript bundled in, signed with the debug key: installable for testing.
+      - run: ./gradlew assembleRelease --no-daemon
+        working-directory: mobile/android
+      - uses: actions/upload-artifact@v5
+        with:
+          name: moments-android-apk
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+
+  ios:
+    name: iOS build (unsigned)
+    needs: app-checks
+    runs-on: macos-15
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
+      - run: npm ci
+      - run: brew install xcbeautify
+      - run: npx expo prebuild --platform ios
+      # Compiles everything for real devices; signing happens on your Mac in Xcode.
+      - name: Build
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild -workspace Moments.xcworkspace -scheme Moments -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build | xcbeautify --renderer github-actions
