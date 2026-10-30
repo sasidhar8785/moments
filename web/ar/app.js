@@ -441,8 +441,8 @@ async function startXR() {
   const HIT_GRACE_MS = 500;
   let lastHitAt = -Infinity;
 
-  const controller = renderer.xr.getController(0);
-  controller.addEventListener("select", () => {
+  // Listen on the session, not one controller, so a tap from any input source counts.
+  session.addEventListener("select", () => {
     if (performance.now() - lastHitAt > HIT_GRACE_MS) return;
     const first = !creator.visible;
     creator.position.setFromMatrixPosition(reticle.matrix);
@@ -450,7 +450,6 @@ async function startXR() {
     $("hint").textContent = "Tap the floor to move them";
     if (first) { revealStart = performance.now(); playFrom(playlist()); }
   });
-  scene.add(controller);
 
   $("replay").onclick = () => { revealStart = performance.now(); playFrom(playlist()); };
   $("close").onclick = () => session.end();
