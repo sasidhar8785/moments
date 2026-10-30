@@ -8,7 +8,8 @@ moment (see `../server`).
 
 Once:
 
-1. Install **Xcode** from the Mac App Store and open it once. In **Xcode → Settings → Accounts**,
+1. Install **Xcode 26 or newer** from the Mac App Store (this Expo version needs Swift 6.2) and
+   open it once. In **Xcode → Settings → Accounts**,
    add your Apple ID (a free one works).
 2. Install the tools: `brew install node cocoapods` (Homebrew: https://brew.sh).
 3. Get the code and build the iOS project:
