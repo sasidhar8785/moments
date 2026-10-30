@@ -66,7 +66,7 @@ export default function JobScreen() {
           <View style={[styles.fillBar, { width: `${Math.max(percent, 3)}%` }]} />
         </View>
         <Text style={styles.muted}>
-          {job.status === "running" ? `${percent}%` : "Another moment is still generating."} This takes several minutes. You
+          {job.status === "running" ? `${percent}% done.` : "Another moment is still generating."} This takes several minutes. You
           can leave this screen; it’ll be under Your moments.
         </Text>
         {error && <Text style={styles.bad}>{error}</Text>}
