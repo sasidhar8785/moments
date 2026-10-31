@@ -7,11 +7,12 @@ dependencies = [
     "numpy",
     "pillow",
     "imageio-ffmpeg",
+    "opencv-python-headless",  # camera tracking, masks
 ]
 
 [project.optional-dependencies]
 # The video model. Kept optional so the clip handling can be installed and tested without it.
-model = ["torch", "diffusers>=0.35", "transformers", "accelerate", "ftfy", "sentencepiece"]
+model = ["torch", "diffusers>=0.35", "transformers", "accelerate", "peft", "ftfy", "sentencepiece"]
 # Cuts the character out of their reference photo.
 cutout = ["rembg[cpu]"]
 # The HTTP API the app talks to.

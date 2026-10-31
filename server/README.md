@@ -31,8 +31,14 @@ In the app, enter the server address: `http://<your Mac's IP>:8000`. Find the IP
 the Mac must be on the same Wi-Fi. If macOS asks whether Python may accept incoming network
 connections, choose **Allow**.
 
-Options: `moments-server --seconds 3` (shorter clips generate faster), `--steps 20` (faster,
-rougher), `--model Wan-AI/Wan2.1-VACE-14B-diffusers` (better, needs far more memory and time).
+By default the server runs a 4-step distilled version of the model (Self-Forcing, Apache-2.0),
+about 12x less work than the full model. Options: `moments-server --seconds 3` (shorter clips
+generate faster), `--best` (the full 1.3B model: slower, sometimes more detailed),
+`--model Wan-AI/Wan2.1-VACE-14B-diffusers` (bigger model, needs far more memory and time).
+
+How a moment is made: the character is cut out of their picture; their outline, fitted into the box
+you placed and widened a little so they can move, is the only area the model paints, so the room
+behind them stays as filmed. The camera's movement is tracked, so that area moves with the scene.
 
 ## Develop
 

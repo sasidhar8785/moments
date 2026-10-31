@@ -11,10 +11,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 
 from . import clip
+from .track import IDENTITY, follow_scene, rescale, warp_mask
 
 MODEL_FPS = 16
 DEFAULT_MODEL = "Wan-AI/Wan2.1-VACE-1.3B-diffusers"
@@ -22,6 +24,23 @@ NEGATIVE_PROMPT = (
     "blurry, distorted, deformed, disfigured, extra limbs, extra fingers, bad anatomy, floating, "
     "duplicate character, static, still picture, overexposed, low quality, watermark, subtitles, text"
 )
+
+
+@dataclass(frozen=True)
+class Mode:
+    """How the model is run: `fast` uses a 4-step distilled version of the 1.3B model."""
+
+    steps: int
+    guidance: float
+    flow_shift: float
+    lora: tuple[str, str] | None = None  # (Hugging Face repo, file)
+
+
+# Self-Forcing (Apache-2.0) distilled into a LoRA for Wan2.1 1.3B: 4 steps, no classifier-free guidance.
+FAST = Mode(steps=4, guidance=1.0, flow_shift=5.0, lora=(
+    "Kijai/WanVideo_comfy", "LoRAs/Wan2_1_self_forcing_1_3B/Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors"))
+# The model as released: slower (about 12x the work), sometimes more detailed.
+BEST = Mode(steps=25, guidance=5.0, flow_shift=3.0)
 
 
 @dataclass(frozen=True)
@@ -57,18 +76,48 @@ def usable_frame_count(available: int, limit: int) -> int:
 
 
 def prepare_reference(image: Image.Image, remove_background: bool = True) -> Image.Image:
-    """The character on a plain white background, which is what VACE's reference input expects."""
+    """The character cut out of their photo (RGBA). The cut-out's shape is also where the model may paint."""
     if remove_background and image.mode != "RGBA":
         from rembg import remove  # optional dependency: momentsgen[cutout]
 
         image = remove(image.convert("RGB"))
-    if image.mode == "RGBA":
+    return image.convert("RGBA") if "A" in image.getbands() else image.convert("RGB")
+
+
+def on_white(image: Image.Image) -> Image.Image:
+    """The character on a plain white background, which is what VACE's reference input expects."""
+    if "A" in image.getbands():
         white = Image.new("RGBA", image.size, (255, 255, 255, 255))
-        image = Image.alpha_composite(white, image)
+        image = Image.alpha_composite(white, image.convert("RGBA"))
     return image.convert("RGB")
 
 
-def load_pipeline(model_id: str = DEFAULT_MODEL, device: str | None = None, dtype=None):
+def character_mask(reference: Image.Image, placement: Placement, size: tuple[int, int], room: float = 0.12) -> np.ndarray:
+    """Where the model may paint (uint8, 255 = paint), for a frame of `size` (w, h).
+
+    With a cut-out reference, that is the character's own outline fitted into the placement (standing
+    on its bottom edge), widened by `room` of the box size so they can move. Everything else in the
+    box, like the furniture behind them, is kept from the real footage. Without a cut-out, the whole box.
+    """
+    w, h = size
+    mask = np.zeros((h, w), np.uint8)
+    if "A" not in reference.getbands():
+        x0, y0, x1, y1 = placement.pixels(w, h, grow=0.08)
+        mask[y0:y1, x0:x1] = 255
+        return mask
+    x0, y0, x1, y1 = placement.pixels(w, h)
+    alpha = reference.getchannel("A")
+    alpha = alpha.crop(alpha.getbbox() or (0, 0, *alpha.size))
+    scale = min((x1 - x0) / alpha.width, (y1 - y0) / alpha.height)
+    fw, fh = max(1, round(alpha.width * scale)), max(1, round(alpha.height * scale))
+    fitted = np.asarray(alpha.resize((fw, fh), Image.BILINEAR)) > 127
+    left, top = x0 + (x1 - x0 - fw) // 2, y1 - fh
+    mask[top:top + fh, left:left + fw][fitted] = 255
+    r = max(1, round(room * max(x1 - x0, y1 - y0)))
+    return cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1)))
+
+
+def load_pipeline(model_id: str = DEFAULT_MODEL, device: str | None = None, dtype=None, mode: Mode = FAST):
     """Load Wan VACE on the best available device: CUDA (Colab, rented GPU), Apple MPS, else CPU."""
     import torch
     from diffusers import AutoencoderKLWan, UniPCMultistepScheduler, WanVACEPipeline
@@ -82,8 +131,13 @@ def load_pipeline(model_id: str = DEFAULT_MODEL, device: str | None = None, dtyp
             dtype = torch.bfloat16 if device == "mps" else torch.float32
     vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
     pipe = WanVACEPipeline.from_pretrained(model_id, vae=vae, torch_dtype=dtype)
-    # flow_shift 3.0 is the recommended setting for 480p.
-    pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=3.0)
+    pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=mode.flow_shift)
+    if mode.lora:
+        if model_id != DEFAULT_MODEL:
+            raise ValueError("Fast mode is made for the 1.3B model; use mode=BEST with other models.")
+        repo, file = mode.lora
+        pipe.load_lora_weights(repo, weight_name=file, adapter_name="fast")
+        pipe.fuse_lora()
     if device == "cuda":
         pipe.enable_model_cpu_offload()  # keeps a 16 GB card (free Colab T4) within memory
     else:
@@ -105,11 +159,13 @@ def insert_character(
     seed: int = 0,
     size: tuple[int, int] | None = None,
     on_step: Callable[[int, int], None] | None = None,
+    follow_camera: bool = True,
 ) -> Path:
     """Write `out_path`: the clip with the character generated inside `placement`, original audio kept.
 
     `reference` should already be prepared (see `prepare_reference`). `size` overrides the model's
     working resolution (tests use a tiny one). `on_step(done, total)` is called after each denoising step.
+    With `follow_camera`, the character stays at the same spot in the scene as the camera moves.
     """
     import torch
 
@@ -121,14 +177,16 @@ def insert_character(
     full = full[:n]
     work = clip.read_frames(clip_path, MODEL_FPS, max_frames=n, size=(work_w, work_h))
 
-    x0, y0, x1, y1 = placement.pixels(work_w, work_h, grow=0.08)
-    mask = Image.new("L", (work_w, work_h), 0)
-    mask.paste(255, (x0, y0, x1, y1))
-    video = []
-    for f in work:
-        frame = Image.fromarray(f)
-        frame.paste((128, 128, 128), (x0, y0, x1, y1))  # VACE expects the region to fill as mid-grey
-        video.append(frame)
+    painted = character_mask(reference, placement, (work_w, work_h))
+    track = _camera_motion(full, placement) if follow_camera else np.tile(IDENTITY, (n, 1, 1))
+    masks, video = [], []
+    for f, m in zip(work, track):
+        frame_mask = np.where(warp_mask(painted, rescale(m, work_w / full_w, work_h / full_h)) > 127, 255, 0)
+        frame_mask = frame_mask.astype(np.uint8)
+        frame = f.copy()
+        frame[frame_mask > 0] = 128  # VACE expects the region to fill as mid-grey
+        masks.append(Image.fromarray(frame_mask))
+        video.append(Image.fromarray(frame))
 
     def step_end(_pipe, i, _t, kwargs):
         if on_step:
@@ -139,8 +197,8 @@ def insert_character(
         prompt=prompt,
         negative_prompt=NEGATIVE_PROMPT,
         video=video,
-        mask=[mask] * n,
-        reference_images=[reference],
+        mask=masks,
+        reference_images=[on_white(reference)],
         height=work_h,
         width=work_w,
         num_frames=n,
@@ -154,18 +212,30 @@ def insert_character(
         raise FloatingPointError("The model produced invalid pixels (numerical overflow). Retry with float32.")
 
     generated = (np.clip(result, 0, 1) * 255).round().astype(np.uint8)
-    composed = _blend_back(full, generated, placement)
+    composed = _blend_back(full, generated, character_mask(reference, placement, (full_w, full_h)), track)
     return clip.write_video(composed, MODEL_FPS, out_path, audio_from=clip_path)
 
 
-def _blend_back(full: np.ndarray, generated: np.ndarray, placement: Placement) -> np.ndarray:
-    """Keep the original pixels outside the placement box; use the generated ones inside, with a soft edge."""
+def _camera_motion(full: np.ndarray, placement: Placement, long_side: int = 640) -> np.ndarray:
+    """Per-frame scene motion in full-resolution pixels, tracked on frames at most `long_side` wide or tall."""
+    h, w = full.shape[1:3]
+    k = min(1.0, long_side / max(w, h))
+    small = full if k == 1.0 else np.stack([cv2.resize(f, (round(w * k), round(h * k)), interpolation=cv2.INTER_AREA)
+                                            for f in full])
+    sh, sw = small.shape[1:3]
+    motion = follow_scene(small, exclude=placement.pixels(sw, sh, grow=0.08))
+    return np.stack([rescale(m, w / sw, h / sh) for m in motion])
+
+
+def _blend_back(full: np.ndarray, generated: np.ndarray, painted: np.ndarray, motion: list[np.ndarray]) -> np.ndarray:
+    """Keep the original pixels outside the painted region (moving with the camera); use the generated ones inside, with a soft edge."""
     n, h, w, _ = full.shape
-    x0, y0, x1, y1 = placement.pixels(w, h, grow=0.08)
     feather = max(2, round(0.02 * max(w, h)))
-    m = Image.new("L", (w, h), 0)
-    # Shrink the hard box by the feather width so the blur stays inside the masked region.
-    m.paste(255, (x0 + feather, y0 + feather, max(x0 + feather, x1 - feather), max(y0 + feather, y1 - feather)))
-    alpha = np.asarray(m.filter(ImageFilter.GaussianBlur(feather / 2)), np.float32)[None, :, :, None] / 255
-    up = np.stack([np.asarray(Image.fromarray(g).resize((w, h), Image.LANCZOS)) for g in generated])
-    return (full * (1 - alpha) + up * alpha).round().astype(np.uint8)
+    # Shrink by the feather width so the soft edge stays inside the region the model painted.
+    core = cv2.erode(painted, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * feather + 1, 2 * feather + 1)))
+    out = np.empty_like(full)
+    for i in range(n):
+        alpha = cv2.GaussianBlur(warp_mask(core, motion[i]), (0, 0), feather / 2).astype(np.float32)[:, :, None] / 255
+        up = cv2.resize(generated[i], (w, h), interpolation=cv2.INTER_LANCZOS4)
+        out[i] = (full[i] * (1 - alpha) + up * alpha).round().astype(np.uint8)
+    return out

@@ -130,4 +130,4 @@ def test_jobs_survive_a_server_restart(tmp_path, characters):
 def test_prompt_falls_back_to_the_characters_default_action():
     prompt = build_prompt({"description": "A tiny knight.", "default_action": "waves hello"}, "  ")
 
-    assert prompt.startswith("A tiny knight. waves hello.")
+    assert prompt.startswith("A tiny knight. It waves hello.")

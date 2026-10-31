@@ -56,10 +56,12 @@ def load_characters(folder: Path = CHARACTERS_DIR) -> dict[str, dict]:
 
 
 def build_prompt(character: dict, direction: str) -> str:
-    """What the video model is asked to show: who the character is, then what they do."""
-    what = direction.strip() or character.get("default_action", "reacts to the person filming")
-    return (f"{character['description']} {what}. Photorealistic, the character is physically part of the scene, "
-            f"lit by the room's light, with natural contact shadows and correct scale.")
+    """What the video model is asked to show: who the character is, then what they do, as full sentences."""
+    what = direction.strip().rstrip(".") or character.get("default_action", "reacts to the person filming")
+    action = f"It {what}." if what[:1].islower() else f"{what}."
+    return (f"{character['description']} {action} It keeps moving naturally throughout the shot. "
+            f"Realistic phone video: the character is physically in the room, lit by the room's light, "
+            f"with natural contact shadows and correct scale.")
 
 
 def create_app(generate: Generator, data_dir: Path | None = None, characters: dict | None = None) -> FastAPI:
@@ -160,7 +162,7 @@ def create_app(generate: Generator, data_dir: Path | None = None, characters: di
 
             prepare_reference(Image.open(character_image.file)).save(folder / "character.png")
         else:
-            Image.open(characters[character_id]["image"]).convert("RGB").save(folder / "character.png")
+            shutil.copyfile(characters[character_id]["image"], folder / "character.png")  # keeps its cut-out
         jobs[job.id] = job
         save(job)
         work.put(job.id)
@@ -187,18 +189,19 @@ def create_app(generate: Generator, data_dir: Path | None = None, characters: di
     return app
 
 
-def vace_generator(model_id: str | None = None, steps: int = 25, seconds: float = 5.0) -> Generator:
-    """The real generator: Wan VACE, loaded once on first use."""
-    from .insert import DEFAULT_MODEL, insert_character, load_pipeline
+def vace_generator(model_id: str | None = None, best: bool = False, seconds: float = 5.0) -> Generator:
+    """The real generator: Wan VACE, loaded once on first use. Fast (4-step) unless `best`."""
+    from .insert import BEST, DEFAULT_MODEL, FAST, insert_character, load_pipeline
 
+    mode = BEST if best or (model_id and model_id != DEFAULT_MODEL) else FAST
     pipe = None
 
     def generate(clip_path, reference, placement, prompt, out_path, on_progress):
         nonlocal pipe
         if pipe is None:
-            pipe = load_pipeline(model_id or DEFAULT_MODEL)
-        insert_character(pipe, clip_path, reference, placement, prompt, out_path,
-                         max_seconds=seconds, steps=steps, on_step=lambda done, total: on_progress(done / total))
+            pipe = load_pipeline(model_id or DEFAULT_MODEL, mode=mode)
+        insert_character(pipe, clip_path, reference, placement, prompt, out_path, max_seconds=seconds,
+                         steps=mode.steps, guidance=mode.guidance, on_step=lambda done, total: on_progress(done / total))
 
     return generate
 
@@ -214,8 +217,8 @@ def main() -> None:
     p.add_argument("--host", default="0.0.0.0", help="0.0.0.0 lets phones on your Wi-Fi reach it")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--model", default=None, help="Hugging Face model id (default: Wan2.1 VACE 1.3B)")
-    p.add_argument("--steps", type=int, default=25)
+    p.add_argument("--best", action="store_true", help="the full model: about 12x slower, sometimes more detailed")
     p.add_argument("--seconds", type=float, default=5.0, help="longest part of a clip to use")
     args = p.parse_args()
-    app = create_app(vace_generator(args.model, args.steps, args.seconds))
+    app = create_app(vace_generator(args.model, args.best, args.seconds))
     uvicorn.run(app, host=args.host, port=args.port)

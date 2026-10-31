@@ -77,6 +77,24 @@ def test_nothing_outside_the_placement_changes(tiny_pipe, tmp_path):
     assert np.abs(after - before)[:, inside].mean() > 10       # the model really painted the box
 
 
+def test_with_a_cut_out_character_only_their_outline_is_painted(tiny_pipe, tmp_path):
+    # A thin upright figure: the model may paint its outline (plus room to move), not the whole box.
+    figure = Image.new("RGBA", (40, 120), (0, 0, 0, 0))
+    figure.paste((200, 30, 30, 255), (14, 0, 26, 120))
+    src = make_clip(tmp_path / "in.mp4", 2.0)
+    out = insert_character(tiny_pipe, src, figure, BOX, "a thin red figure waves", tmp_path / "out.mp4",
+                           max_seconds=1.1, steps=2, size=(32, 32))
+
+    before = clip.read_frames(src, 16, max_frames=17).astype(int)
+    after = clip.read_frames(out, 16).astype(int)
+    x0, y0, x1, y1 = BOX.pixels(96, 160)
+    corner = (slice(y0, y0 + 12), slice(x0, x0 + 6))   # inside the box, well away from the figure
+    figure_middle = (slice((y0 + y1) // 2 - 6, (y0 + y1) // 2 + 6), slice((x0 + x1) // 2 - 2, (x0 + x1) // 2 + 2))
+
+    assert np.abs(after - before)[:, corner[0], corner[1]].mean() < 3
+    assert np.abs(after - before)[:, figure_middle[0], figure_middle[1]].mean() > 10
+
+
 def test_a_clip_shorter_than_five_model_frames_is_rejected(tiny_pipe, tmp_path):
     with pytest.raises(ValueError, match="too short"):
         run(tiny_pipe, make_clip(tmp_path / "in.mp4", 0.2), tmp_path / "out.mp4", seconds=0.2)
