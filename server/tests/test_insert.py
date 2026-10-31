@@ -88,7 +88,7 @@ def test_with_a_cut_out_character_only_their_outline_is_painted(tiny_pipe, tmp_p
     before = clip.read_frames(src, 16, max_frames=17).astype(int)
     after = clip.read_frames(out, 16).astype(int)
     x0, y0, x1, y1 = BOX.pixels(96, 160)
-    corner = (slice(y0, y0 + 12), slice(x0, x0 + 6))   # inside the box, well away from the figure
+    corner = (slice(y0, y0 + 12), slice(x0, x0 + 4))   # inside the box, clear of the figure and its room to move
     figure_middle = (slice((y0 + y1) // 2 - 6, (y0 + y1) // 2 + 6), slice((x0 + x1) // 2 - 2, (x0 + x1) // 2 + 2))
 
     assert np.abs(after - before)[:, corner[0], corner[1]].mean() < 3

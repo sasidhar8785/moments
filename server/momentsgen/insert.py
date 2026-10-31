@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image
 
 from . import clip
-from .track import IDENTITY, follow_scene, rescale, warp_mask
+from .track import IDENTITY, follow_scene, in_region, rescale, warp_mask
 
 MODEL_FPS = 16
 DEFAULT_MODEL = "Wan-AI/Wan2.1-VACE-1.3B-diffusers"
@@ -66,6 +66,34 @@ class Placement:
 def working_size(width: int, height: int, long_side: int = 832, short_side: int = 480) -> tuple[int, int]:
     """The model's working resolution (w, h), matching the clip's orientation. 480p is what the 1.3B model is trained for."""
     return (short_side, long_side) if height >= width else (long_side, short_side)
+
+
+def focus_region(placement: Placement, size: tuple[int, int], aspect: float, motion: np.ndarray | None = None,
+                 context: float = 1.8) -> tuple[int, int, int, int]:
+    """The part of the frame the model works on: (x0, y0, x1, y1) pixels with shape `aspect` (w / h).
+
+    It covers the placement wherever the camera motion takes it, with `context` times its size so the
+    model sees the surroundings. Small placements then get the model's full resolution instead of a few
+    pixels of a whole-frame render. Falls back to the whole frame when the region would not fit.
+    """
+    w, h = size
+    x0, y0, x1, y1 = placement.pixels(w, h)
+    corners = np.array([[x0, y0, 1], [x1, y0, 1], [x0, y1, 1], [x1, y1, 1]], np.float64)
+    for m in (motion if motion is not None else [IDENTITY]):
+        moved = corners @ np.asarray(m, np.float64).T
+        x0, y0 = min(x0, moved[:, 0].min()), min(y0, moved[:, 1].min())
+        x1, y1 = max(x1, moved[:, 0].max()), max(y1, moved[:, 1].max())
+    need_w, need_h = (x1 - x0) * context, (y1 - y0) * context
+    crop_w = max(need_w, need_h * aspect, 64.0)
+    crop_h = crop_w / aspect
+    if crop_w > w or crop_h > h:
+        k = min(w / crop_w, h / crop_h)
+        crop_w, crop_h = crop_w * k, crop_h * k
+        if crop_w < x1 - x0 or crop_h < y1 - y0:
+            return 0, 0, w, h
+    left = min(max((x0 + x1 - crop_w) / 2, 0), w - crop_w)
+    top = min(max((y0 + y1 - crop_h) / 2, 0), h - crop_h)
+    return round(left), round(top), min(w, round(left + crop_w)), min(h, round(top + crop_h))
 
 
 def usable_frame_count(available: int, limit: int) -> int:
@@ -180,20 +208,29 @@ def insert_character(
     """
     import torch
 
-    full_w, full_h = clip.frame_size(clip_path)
-    work_w, work_h = size or working_size(full_w, full_h)
-
     full = clip.read_frames(clip_path, MODEL_FPS, max_frames=round(max_seconds * MODEL_FPS) + 1)
     n = usable_frame_count(len(full), round(max_seconds * MODEL_FPS) + 1)
     full = full[:n]
-    work = clip.read_frames(clip_path, MODEL_FPS, max_frames=n, size=(work_w, work_h))
-
-    painted = character_mask(reference, placement, (work_w, work_h))
+    full_h, full_w = full.shape[1:3]
     track = _camera_motion(full, placement) if follow_camera else np.tile(IDENTITY, (n, 1, 1))
+
+    # Work on a crop around the character at the model's resolution (see focus_region).
+    if size:
+        work_w, work_h = size
+    else:
+        bw, bh = placement.width * full_w, placement.height * full_h
+        work_w, work_h = working_size(1, 2) if bh > bw * 1.2 else working_size(2, 1)
+    region = focus_region(placement, (full_w, full_h), work_w / work_h, track)
+    rx0, ry0, rx1, ry1 = region
+    sx, sy = work_w / (rx1 - rx0), work_h / (ry1 - ry0)
+    work = [cv2.resize(f[ry0:ry1, rx0:rx1], (work_w, work_h), interpolation=cv2.INTER_AREA) for f in full]
+    local = Placement((placement.left * full_w - rx0) / (rx1 - rx0), (placement.top * full_h - ry0) / (ry1 - ry0),
+                      placement.width * full_w / (rx1 - rx0), placement.height * full_h / (ry1 - ry0))
+
+    painted = character_mask(reference, local, (work_w, work_h))
     masks, video = [], []
     for f, m in zip(work, track):
-        frame_mask = np.where(warp_mask(painted, rescale(m, work_w / full_w, work_h / full_h)) > 127, 255, 0)
-        frame_mask = frame_mask.astype(np.uint8)
+        frame_mask = np.where(warp_mask(painted, in_region(m, rx0, ry0, sx, sy)) > 127, 255, 0).astype(np.uint8)
         frame = f.copy()
         frame[frame_mask > 0] = 128  # VACE expects the region to fill as mid-grey
         masks.append(Image.fromarray(frame_mask))
@@ -223,7 +260,7 @@ def insert_character(
         raise FloatingPointError("The model produced invalid pixels (numerical overflow). Retry with float32.")
 
     generated = (np.clip(result, 0, 1) * 255).round().astype(np.uint8)
-    composed = _blend_back(full, generated, character_mask(reference, placement, (full_w, full_h)), track)
+    composed = _blend_back(full, generated, character_mask(reference, placement, (full_w, full_h)), track, region)
     return clip.write_video(composed, MODEL_FPS, out_path, audio_from=clip_path)
 
 
@@ -238,15 +275,21 @@ def _camera_motion(full: np.ndarray, placement: Placement, long_side: int = 640)
     return np.stack([rescale(m, w / sw, h / sh) for m in motion])
 
 
-def _blend_back(full: np.ndarray, generated: np.ndarray, painted: np.ndarray, motion: list[np.ndarray]) -> np.ndarray:
-    """Keep the original pixels outside the painted region (moving with the camera); use the generated ones inside, with a soft edge."""
+def _blend_back(full: np.ndarray, generated: np.ndarray, painted: np.ndarray, motion: np.ndarray,
+                region: tuple[int, int, int, int]) -> np.ndarray:
+    """Keep the original pixels outside the painted area (moving with the camera); inside it, use the
+    generated crop, put back where it came from (`region`), with a soft edge."""
     n, h, w, _ = full.shape
-    feather = max(2, round(0.02 * max(w, h)))
-    # Shrink by the feather width so the soft edge stays inside the region the model painted.
+    x0, y0, x1, y1 = region
+    feather = max(2, round(0.02 * max(x1 - x0, y1 - y0)))
+    # Shrink by the feather width so the soft edge stays inside the area the model painted.
     core = cv2.erode(painted, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * feather + 1, 2 * feather + 1)))
-    out = np.empty_like(full)
+    inside = np.zeros((h, w), np.float32)
+    inside[y0:y1, x0:x1] = 1
+    out = full.copy()
     for i in range(n):
-        alpha = cv2.GaussianBlur(warp_mask(core, motion[i]), (0, 0), feather / 2).astype(np.float32)[:, :, None] / 255
-        up = cv2.resize(generated[i], (w, h), interpolation=cv2.INTER_LANCZOS4)
-        out[i] = (full[i] * (1 - alpha) + up * alpha).round().astype(np.uint8)
+        alpha = cv2.GaussianBlur(warp_mask(core, motion[i]), (0, 0), feather / 2).astype(np.float32) / 255 * inside
+        up = cv2.resize(generated[i], (x1 - x0, y1 - y0), interpolation=cv2.INTER_LANCZOS4)
+        a = alpha[y0:y1, x0:x1, None]
+        out[i, y0:y1, x0:x1] = (full[i, y0:y1, x0:x1] * (1 - a) + up * a).round().astype(np.uint8)
     return out

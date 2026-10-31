@@ -47,6 +47,11 @@ def warp_mask(mask: np.ndarray, transform: np.ndarray) -> np.ndarray:
 
 def rescale(transform: np.ndarray, sx: float, sy: float) -> np.ndarray:
     """The same motion expressed for frames scaled by (sx, sy), e.g. from working size to full size."""
-    s = np.diag([sx, sy, 1.0])
+    return in_region(transform, 0, 0, sx, sy)
+
+
+def in_region(transform: np.ndarray, x0: float, y0: float, sx: float, sy: float) -> np.ndarray:
+    """The same motion expressed in the coordinates of a crop starting at (x0, y0), scaled by (sx, sy)."""
+    to_crop = np.array([[sx, 0, -x0 * sx], [0, sy, -y0 * sy], [0, 0, 1]])
     full = np.vstack([transform, [0, 0, 1]])
-    return (s @ full @ np.linalg.inv(s))[:2].astype(np.float32)
+    return (to_crop @ full @ np.linalg.inv(to_crop))[:2].astype(np.float32)
