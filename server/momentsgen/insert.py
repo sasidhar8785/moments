@@ -34,10 +34,11 @@ class Mode:
     guidance: float
     flow_shift: float
     lora: tuple[str, str] | None = None  # (Hugging Face repo, file)
+    sampler: str = "unipc"  # "lcm" for distilled models: predict the clean video, re-noise, repeat
 
 
 # Self-Forcing (Apache-2.0) distilled into a LoRA for Wan2.1 1.3B: 4 steps, no classifier-free guidance.
-FAST = Mode(steps=4, guidance=1.0, flow_shift=5.0, lora=(
+FAST = Mode(steps=4, guidance=1.0, flow_shift=5.0, sampler="lcm", lora=(
     "Kijai/WanVideo_comfy", "LoRAs/Wan2_1_self_forcing_1_3B/Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors"))
 # The model as released: slower (about 12x the work), sometimes more detailed.
 BEST = Mode(steps=25, guidance=5.0, flow_shift=3.0)
@@ -120,7 +121,7 @@ def character_mask(reference: Image.Image, placement: Placement, size: tuple[int
 def load_pipeline(model_id: str = DEFAULT_MODEL, device: str | None = None, dtype=None, mode: Mode = FAST):
     """Load Wan VACE on the best available device: CUDA (Colab, rented GPU), Apple MPS, else CPU."""
     import torch
-    from diffusers import AutoencoderKLWan, UniPCMultistepScheduler, WanVACEPipeline
+    from diffusers import AutoencoderKLWan, WanVACEPipeline
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -131,18 +132,28 @@ def load_pipeline(model_id: str = DEFAULT_MODEL, device: str | None = None, dtyp
             dtype = torch.bfloat16 if device == "mps" else torch.float32
     vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
     pipe = WanVACEPipeline.from_pretrained(model_id, vae=vae, torch_dtype=dtype)
-    pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=mode.flow_shift)
-    if mode.lora:
-        if model_id != DEFAULT_MODEL:
-            raise ValueError("Fast mode is made for the 1.3B model; use mode=BEST with other models.")
-        repo, file = mode.lora
-        pipe.load_lora_weights(repo, weight_name=file, adapter_name="fast")
-        pipe.fuse_lora()
+    if mode.lora and model_id != DEFAULT_MODEL:
+        raise ValueError("Fast mode is made for the 1.3B model; use mode=BEST with other models.")
+    apply_mode(pipe, mode)
     if device == "cuda":
         pipe.enable_model_cpu_offload()  # keeps a 16 GB card (free Colab T4) within memory
     else:
         pipe.to(device)
     return pipe
+
+
+def apply_mode(pipe, mode: Mode) -> None:
+    """Set the sampler for `mode` and, for fast mode, merge the distilled weights into the model."""
+    from diffusers import FlowMatchLCMScheduler, UniPCMultistepScheduler
+
+    if mode.sampler == "lcm":
+        pipe.scheduler = FlowMatchLCMScheduler.from_config(pipe.scheduler.config, shift=mode.flow_shift)
+    else:
+        pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=mode.flow_shift)
+    if mode.lora:
+        repo, file = mode.lora
+        pipe.load_lora_weights(repo, weight_name=file, adapter_name="fast")
+        pipe.fuse_lora()
 
 
 def insert_character(
